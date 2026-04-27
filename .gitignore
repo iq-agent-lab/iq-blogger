@@ -1,74 +1,41 @@
 # =============================================================================
-# Convex Optimization Deep Dive — .gitignore
+# iq-blogger — .gitignore
 # =============================================================================
 
-# ── Python ──────────────────────────────────────────────────────────────────
-__pycache__/
-*.py[cod]
-*$py.class
-*.so
-*.pyd
+# ── Node.js ──────────────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+.pnpm-store/
 
-# Distribution / Packaging
-.Python
-build/
+# ── Build outputs ────────────────────────────────────────────────────────────
 dist/
-eggs/
-.eggs/
-*.egg-info/
-*.egg
-MANIFEST
-sdist/
-wheels/
-pip-wheel-metadata/
-share/python-wheels/
+build/
+*.tsbuildinfo
 
-# Virtual environments
+# ── Environment & secrets ────────────────────────────────────────────────────
 .env
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
+.env.local
+.env.*.local
+.env.production
+.env.development
 
-# ── Jupyter Notebook ─────────────────────────────────────────────────────────
-.ipynb_checkpoints/
-*/.ipynb_checkpoints/
-profile_default/
-ipython_config.py
+# ── iq-blogger working directories ───────────────────────────────────────────
+# 변환 결과물 (개인 작업 공간, blog 레포에 PR로 보낼 때까지 로컬에만)
+drafts/
 
-# ── NumPy / SciPy / CVXPY cache ─────────────────────────────────────────────
-*.npy
-*.npz
-*.pkl
-*.pickle
-*.joblib
+# 입력 캐시 (다른 레포에서 복사해온 deep-dive 원본)
+test-inputs/
+.cache/
 
-# CVXPY solver cache
-.clarabel_cache/
-.osqp_cache/
-.ecos_cache/
-.scs_cache/
-
-# ── Experiment outputs ───────────────────────────────────────────────────────
-# 생성된 이미지 파일 (각 챕터의 시각화 결과물)
-*.png
-*.jpg
-*.jpeg
-*.svg
-*.pdf
-
-# 실험 데이터 / 결과물
-results/
-outputs/
-logs/
-checkpoints/
-*.log
-*.csv
+# 진행 추적 파일 (drafts/ 안에 있어서 자동 무시되지만 명시)
+progress.json
 
 # ── IDE / Editor ─────────────────────────────────────────────────────────────
-# JetBrains (PyCharm, IntelliJ)
+# JetBrains (IntelliJ, WebStorm)
 .idea/
 *.iml
 *.iws
@@ -85,51 +52,30 @@ checkpoints/
 \#*\#
 .\#*
 
+# ── OS ───────────────────────────────────────────────────────────────────────
 # macOS
 .DS_Store
 .AppleDouble
 .LSOverride
 ._*
-.DocumentRevisions-V100
-.fseventsd
 .Spotlight-V100
-.TemporaryItems
 .Trashes
-.VolumeIcon.icns
-.com.apple.timemachine.donotpresent
 
 # Windows
 Thumbs.db
-Thumbs.db:encryptable
-ehthumbs.db
 Desktop.ini
 $RECYCLE.BIN/
-*.lnk
 
 # Linux
 .directory
 
-# ── Documentation build ──────────────────────────────────────────────────────
-docs/_build/
-docs/generated/
-site/
-.mkdocs_cache/
+# ── Logs ─────────────────────────────────────────────────────────────────────
+logs/
+*.log
 
-# ── Secrets / Credentials ────────────────────────────────────────────────────
-.env.local
-.env.*.local
-secrets.py
-credentials.json
-*.pem
-*.key
+# ── TypeScript / Vitest cache ────────────────────────────────────────────────
+.tscache/
+coverage/
+.vitest/
 
-# ── Miscellaneous ────────────────────────────────────────────────────────────
-.hypothesis/
-.pytest_cache/
-.mypy_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-.tox/
-*.mo
-*.pot
+test-inputs/redis-deep-dive/
