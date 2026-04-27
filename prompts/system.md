@@ -115,6 +115,7 @@ import Aside from '@/components/mdx/Aside.astro';
 9. **트레이드오프 섹션은 생략 불가**. `<Callout type="note" title="트레이드오프">` 또는 H2 통째로.
 10. **수식**: 인라인 `$...$`, 블록 `$$...$$`. `$$` 앞뒤로 빈 줄 필수.
 11. **코드블록**: 언어 태그 필수 (java, python, bash, sql, yaml 등). ASCII 다이어그램은 태그 없이.
+12. **Reference 정확성**: `<Reference>` 컴포넌트의 title, authors, year, url은 본문에서 명시적으로 인용된 논문 정보만 사용한다. 본문에 없는 논문은 추가하지 마라. 정확한 정보를 모르면 Reference 자체를 생략하라. 환각된 논문 정보는 절대 금지.
 
 ---
 
@@ -146,9 +147,9 @@ import Aside from '@/components/mdx/Aside.astro';
   - 본문에 `$$` 블록이 3개 이상 → `advanced`
   - `<Theorem>`/`<Proof>` 사용 → `advanced`
   - 그 외 → `intermediate`
-- **series.slug**: 원본 SOURCE_PATH의 첫 폴더명 (`redis-internals`).
+- **series.slug**: `SOURCE_PATH` 값을 그대로 사용. 이는 레포 단위의 시리즈 slug다 (예: `transformer-deep-dive`).
+- **series.order**: `CHAPTER_ORDER` 값을 그대로 사용. 이는 폴더 이름의 ch 번호에서 자동 추출됐다 (예: `ch2-...` → 2).
 - **series.title**: `CHAPTER_TITLE` 값 그대로.
-- **series.order**: `CHAPTER_ORDER` 값 그대로.
 - **slug (파일명용)**: 영문 kebab-case, 20-50자, `<technology>-<concept>-<mechanism>` 패턴.
 
 ---

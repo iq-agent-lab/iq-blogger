@@ -35,6 +35,9 @@ import { convert } from './agent';
 import { validate, parseMdx } from './validator';
 import type { ConversionInput, ValidationResult } from './types';
 import { loadProgress, formatStatusReport } from './progress';
+import { convertFolder } from './folder-converter';
+import { cloneOrPull } from './git-ops';
+import { convertRepo } from './repo-converter';
 
 // Load .env from CWD, falling back to package root.
 loadEnv();
@@ -281,9 +284,12 @@ function printRootHelp(): void {
         'iq-blogger — Convert deep-dive docs into IQ Lab Blog posts.',
         '',
         'Commands:',
-        '  convert   Convert a .md deep-dive to .mdx blog post',
-        '  validate  Check an existing .mdx against blog hard constraints',
-        '  status    Show conversion progress across repos and folders',
+        '  convert         Convert a single .md file to .mdx blog post (translation)',
+        '  convert-folder  Synthesize a folder of chapters into one .mdx (synthesis)',
+        '  convert-repo    Clone a repo and convert all folders (full automation)',
+        '  validate        Check an existing .mdx against blog hard constraints',
+        '  status          Show conversion progress across repos and folders',
+        '  clone           Clone or update a source repo (testing)',
         '',
         'Run `tsx src/index.ts <command> --help` for command-specific options.',
       ].join('\n'),
@@ -308,11 +314,20 @@ async function main(): Promise<void> {
       case 'convert':
         code = await cmdConvert(args);
         break;
+      case 'convert-folder':
+        code = await cmdConvertFolder(args);
+        break;
       case 'validate':
         code = await cmdValidate(args);
         break;
       case 'status':
         code = await cmdStatus(args);
+        break;
+      case 'clone':
+        code = await cmdClone(args);
+        break;
+      case 'convert-repo':
+        code = await cmdConvertRepo(args);
         break;
       default:
         console.error(`Unknown command: "${args.command}"`);
@@ -344,6 +359,180 @@ async function cmdStatus(args: Args): Promise<number> {
   console.log(report);
 
   return 0;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Command: convert-folder
+   ───────────────────────────────────────────────────────────── */
+
+async function cmdConvertFolder(args: Args): Promise<number> {
+  const folderPath = args.positional[0];
+  if (!folderPath) {
+    console.error('Error: convert-folder requires a folder path.');
+    console.error('');
+    printConvertFolderHelp();
+    return 2;
+  }
+
+  // Required flags
+  const requiredFlags = ['source', 'folder', 'title'] as const;
+  const missing = requiredFlags.filter((f) => !args.flags[f]);
+  if (missing.length > 0) {
+    console.error(`Error: missing required flags: ${missing.map((f) => `--${f}`).join(', ')}`);
+    console.error('');
+    printConvertFolderHelp();
+    return 2;
+  }
+
+  const result = await convertFolder({
+    source: args.flags.source!,
+    folder: args.flags.folder!,
+    title: args.flags.title!,
+    folderPath,
+    outDir: args.flags.out,
+    date: args.flags.date,
+    skipIfDone: args.flags.force !== 'true',
+  });
+
+  if (!result.ok) {
+    console.error(`[iq-blogger] FAILED: ${result.reason}`);
+    if (result.issues) {
+      console.error('Issues:');
+      for (const issue of result.issues) {
+        console.error(`  - ${issue}`);
+      }
+    }
+    return 1;
+  }
+
+  console.error('');
+  console.error(`[iq-blogger] ✅ Synthesized ${result.chaptersUsed} chapters → ${result.outputPath}`);
+  console.error(`[iq-blogger] ${result.wordCount} words | ${result.attempts} attempt${result.attempts === 1 ? '' : 's'} | $${result.cost.toFixed(4)}`);
+
+  return 0;
+}
+
+function printConvertFolderHelp(): void {
+  console.error(
+      [
+        'Usage: tsx src/index.ts convert-folder [options] <folder-path>',
+        '',
+        'Required flags:',
+        '  --source <owner/repo>       e.g. iq-dev-lab/redis-deep-dive',
+        '  --folder <name>             folder name within repo, e.g. redis-internals',
+        '  --title <string>            display title, e.g. "Redis Internals"',
+        '',
+        'Optional flags:',
+        '  --out <dir>                 output directory (default: ./drafts)',
+        '  --date <YYYY-MM-DD>         override pubDate (default: today)',
+        '  --force                     re-convert even if already done',
+        '',
+        'Example:',
+        '  tsx src/index.ts convert-folder \\',
+        '    --source iq-dev-lab/redis-deep-dive \\',
+        '    --folder redis-internals \\',
+        '    --title "Redis Internals" \\',
+        '    ./test-inputs/redis-deep-dive/redis-internals',
+      ].join('\n'),
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Command: clone (testing git-ops module)
+   ───────────────────────────────────────────────────────────── */
+
+async function cmdClone(args: Args): Promise<number> {
+  const source = args.positional[0];
+  if (!source) {
+    console.error('Error: clone requires a source argument.');
+    console.error('Usage: tsx src/index.ts clone <org/repo>');
+    console.error('Example: tsx src/index.ts clone iq-ai-lab/transformer-deep-dive');
+    return 2;
+  }
+
+  try {
+    const result = await cloneOrPull({
+      source,
+      force: args.flags.force === 'true',
+    });
+    console.error('');
+    console.error(`[iq-blogger] ✅ ${result.action} → ${result.path}`);
+    console.error(`[iq-blogger] Took ${result.durationMs}ms`);
+    return 0;
+  } catch (err) {
+    console.error('');
+    console.error(`[iq-blogger] ❌ Failed: ${(err as Error).message}`);
+    return 1;
+  }
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Command: convert-repo
+   ───────────────────────────────────────────────────────────── */
+
+async function cmdConvertRepo(args: Args): Promise<number> {
+  const source = args.positional[0];
+  if (!source) {
+    console.error('Error: convert-repo requires a source argument.');
+    console.error('');
+    printConvertRepoHelp();
+    return 2;
+  }
+
+  // Validate source format (org/repo)
+  if (!source.includes('/') || source.split('/').length !== 2) {
+    console.error(`Error: source must be in "org/repo" format, got "${source}"`);
+    return 2;
+  }
+
+  try {
+    const summary = await convertRepo({
+      source,
+      title: args.flags.title,
+      only: args.flags.only,
+      outDir: args.flags.out,
+      skipIfDone: args.flags.force !== 'true',
+      forceClone: args.flags['force-clone'] === 'true',
+    });
+
+    // Print summary
+    console.error('');
+    console.error('━'.repeat(50));
+    console.error(`Summary for ${source}:`);
+    console.error(`  ✅ Done:     ${summary.done}`);
+    console.error(`  ⏭️  Skipped:  ${summary.skipped}`);
+    console.error(`  ❌ Failed:   ${summary.failed}`);
+    console.error(`  Total cost: $${summary.totalCost.toFixed(2)}`);
+    console.error(`  Duration:   ${(summary.durationMs / 1000).toFixed(1)}s`);
+
+    return summary.failed > 0 ? 1 : 0;
+  } catch (err) {
+    console.error('');
+    console.error(`[iq-blogger] ❌ Failed: ${(err as Error).message}`);
+    return 1;
+  }
+}
+
+function printConvertRepoHelp(): void {
+  console.error(
+      [
+        'Usage: tsx src/index.ts convert-repo <org/repo> [options]',
+        '',
+        'Required:',
+        '  <org/repo>            e.g. iq-ai-lab/transformer-deep-dive',
+        '',
+        'Optional flags:',
+        '  --title <string>      override series title (default: derived from repo)',
+        '  --only <folder>       process only one folder (e.g. ch1-attention-decomposition)',
+        '  --out <dir>           output directory (default: ./drafts)',
+        '  --force               re-convert even if already done',
+        '  --force-clone         delete cache and re-clone',
+        '',
+        'Examples:',
+        '  tsx src/index.ts convert-repo iq-ai-lab/transformer-deep-dive',
+        '  tsx src/index.ts convert-repo iq-dev-lab/redis-deep-dive --only redis-internals',
+      ].join('\n'),
+  );
 }
 
 main();
