@@ -78,7 +78,8 @@ import Callout from '@/components/mdx/Callout.astro';
 import Theorem from '@/components/mdx/Theorem.astro';
 import Proof from '@/components/mdx/Proof.astro';
 import Aside from '@/components/mdx/Aside.astro';
-{필요 시 Collapse, Reference 추가 import}
+import Reference from '@/components/mdx/Reference.astro';
+{필요 시 Collapse 등 추가 import}
 
 <인트로 2-3 문장. H2 없음. "왜?" 질문으로 끝낸다.>
 
@@ -111,11 +112,19 @@ import Aside from '@/components/mdx/Aside.astro';
 5. **경어체 금지**: `~합니다`, `~입니다`, `~세요`, `~까요` 전부 `~한다`, `~이다`, `~하자`, `~는가` 로.
 6. **`draft: true`, `featured: false`** 고정.
 7. **`💻 실전 실험`과 `🤔 생각해볼 문제` 섹션은 제거**. 원본 레포 링크 한 줄로 대체하거나 그냥 삭제.
-8. **MDX 컴포넌트 import**는 본문에서 실제로 사용한 것만. 미사용 import 금지.
+8. **MDX 컴포넌트 import**는 본문에서 사용한 모든 컴포넌트를 빠짐없이 import해야 한다. 본문에 `<Reference>`를 쓰면서 import에서 누락하면 빌드 런타임 에러가 발생한다. 미사용 import는 권장되지 않지만, 누락은 절대 금지다. 빌드 런타임 에러가 발생할 위험이 있다면 **누락보다 미사용 import가 더 안전한 선택**이다.
 9. **트레이드오프 섹션은 생략 불가**. `<Callout type="note" title="트레이드오프">` 또는 H2 통째로.
 10. **수식**: 인라인 `$...$`, 블록 `$$...$$`. `$$` 앞뒤로 빈 줄 필수.
 11. **코드블록**: 언어 태그 필수 (java, python, bash, sql, yaml 등). ASCII 다이어그램은 태그 없이.
 12. **Reference 정확성**: `<Reference>` 컴포넌트의 title, authors, year, url은 본문에서 명시적으로 인용된 논문 정보만 사용한다. 본문에 없는 논문은 추가하지 마라. 정확한 정보를 모르면 Reference 자체를 생략하라. 환각된 논문 정보는 절대 금지.
+13. **YAML frontmatter 들여쓰기**: `series:` 같은 nested mapping의 하위 키는 반드시 **공백 정확히 2칸**으로 들여써야 한다. 탭 금지, 공백 0칸이나 4칸 금지. `series.title`이 들여쓰기 없이 column 0에 오면 top-level `title`과 중복 키로 인식되어 `duplicated mapping key` YAML 파싱 에러가 발생한다. 올바른 예시:
+
+```
+    series:
+      slug: transformer-deep-dive
+      title: Transformer Deep Dive
+      order: 7
+```
 
 ---
 
