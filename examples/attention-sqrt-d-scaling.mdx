@@ -1,0 +1,124 @@
+---
+title: "Attention의 √d 스케일링은 어디서 왔나"
+description: "Scaled dot-product attention의 분모 √d_k가 왜 필요한가. Softmax 포화를 막기 위한 분산 보존 유도와 Linear Attention의 가정까지."
+pubDate: 2026-04-15
+category: ai
+tags: [transformer, attention, softmax, variance]
+difficulty: advanced
+draft: false
+featured: true
+---
+
+import Callout from '@/components/mdx/Callout.astro';
+import Theorem from '@/components/mdx/Theorem.astro';
+import Proof from '@/components/mdx/Proof.astro';
+import Reference from '@/components/mdx/Reference.astro';
+import Aside from '@/components/mdx/Aside.astro';
+
+Transformer 논문에서 attention은 다음과 같이 정의된다.
+
+$$
+\text{Attention}(Q, K, V) = \text{softmax}\left(\frac{QK^\top}{\sqrt{d_k}}\right) V
+$$
+
+왜 하필 $\sqrt{d_k}$로 나누는가? 단순히 "실험적으로 잘 되더라"가 아니라, **Softmax 포화(saturation)를 막기 위한 분산 보존**이라는 구체적인 이유가 있다.
+
+## 문제: 내적의 분산 폭발
+
+쿼리 $q \in \mathbb{R}^{d_k}$와 키 $k \in \mathbb{R}^{d_k}$의 각 성분이 독립적이고 평균 0, 분산 1이라고 하자. 이들의 내적은
+
+$$
+q \cdot k = \sum_{i=1}^{d_k} q_i k_i
+$$
+
+이다. 각 항 $q_i k_i$의 평균과 분산을 계산하면:
+
+<Theorem kind="lemma" number="1" title="내적의 분산">
+$q_i, k_i$가 독립이고 $\mathbb{E}[q_i] = \mathbb{E}[k_i] = 0$, $\text{Var}(q_i) = \text{Var}(k_i) = 1$일 때,
+
+$$
+\text{Var}(q \cdot k) = d_k
+$$
+</Theorem>
+
+<Proof>
+각 항의 기대값은 독립성으로부터
+
+$$
+\mathbb{E}[q_i k_i] = \mathbb{E}[q_i]\mathbb{E}[k_i] = 0
+$$
+
+이므로 $\mathbb{E}[(q_i k_i)^2] = \mathbb{E}[q_i^2] \mathbb{E}[k_i^2] = 1 \cdot 1 = 1$. 따라서
+
+$$
+\text{Var}(q_i k_i) = \mathbb{E}[(q_i k_i)^2] - (\mathbb{E}[q_i k_i])^2 = 1 - 0 = 1
+$$
+
+독립된 항 $d_k$개의 합이므로 분산은 $\sum_{i=1}^{d_k} \text{Var}(q_i k_i) = d_k$.
+</Proof>
+
+즉, 차원 $d_k$가 커질수록 내적의 **스케일이 $\sqrt{d_k}$ 비율로 커진다**.
+
+## 왜 이게 문제인가: Softmax 포화
+
+Softmax는 큰 입력값에서 그래디언트가 급격히 작아진다.
+
+$$
+\frac{\partial \text{softmax}(x)_i}{\partial x_j} =
+\text{softmax}(x)_i (\delta_{ij} - \text{softmax}(x)_j)
+$$
+
+만약 한 값이 다른 값들보다 크게 우세하면 그 항의 softmax 출력이 1에 가까워지고, 다른 항들은 0에 가까워진다. 이 경우 **모든 성분의 그래디언트가 0에 수렴**한다 — 학습이 멈춘다.
+
+<Callout type="warning" title="Saturation의 본질">
+Softmax 포화는 입력의 *상대적 크기* 문제가 아니라 *절대적 크기* 문제다. 입력값들의 차이가 커질수록 극단적으로 치우친 분포가 된다.
+</Callout>
+
+## 해결: 분산을 1로 정규화
+
+$q \cdot k$의 분산이 $d_k$라면, $\sqrt{d_k}$로 나눠서 분산을 1로 되돌린다.
+
+$$
+\text{Var}\left(\frac{q \cdot k}{\sqrt{d_k}}\right) = \frac{d_k}{d_k} = 1
+$$
+
+이로써 차원 $d_k$가 늘어나도 내적 스코어의 분포가 안정적으로 유지되고, Softmax가 초기에 극단적으로 치우친 분포를 출력하는 것을 막는다. **학습 초기의 그래디언트 흐름이 보장**된다.
+
+## Linear Attention의 가정
+
+최근 Linear Attention 계열 ($O(N)$ 복잡도)은 이 스케일링을 다른 방식으로 우회한다. 예를 들어 Performer는
+
+$$
+\text{softmax}(QK^\top) \approx \phi(Q) \phi(K)^\top
+$$
+
+와 같이 커널 트릭으로 근사하는데, 여기서도 **$\phi(\cdot)$의 출력 분산이 유한해야 한다는 가정**이 내부적으로 작동한다. $\sqrt{d_k}$ 정규화가 표면에서 사라진 것처럼 보여도, 근본적인 분산 보존 원칙은 유지되어야 한다.
+
+<Aside label="직관">
+모든 딥러닝 정규화(BatchNorm, LayerNorm, weight init scaling)는 결국 같은 동기를 공유한다 — *신호가 깊이 방향으로 확산되거나 소멸하지 않도록 분산을 제어하라*. $\sqrt{d_k}$ 스케일링도 같은 철학의 작은 사례다.
+</Aside>
+
+## 정리
+
+- $QK^\top$의 분산은 차원 $d_k$에 선형 비례한다.
+- 큰 분산은 Softmax 포화를 유발해 그래디언트를 죽인다.
+- $\sqrt{d_k}$로 나누면 분산이 1로 정규화되어 학습이 안정된다.
+- 이 원칙은 Linear Attention 계열에도 다른 형태로 이어진다.
+
+수식 한 줄 뒤에는 "그래디언트를 살려야 한다"는 구체적인 엔지니어링 요구가 숨어 있다.
+
+<Reference
+  title="Attention Is All You Need"
+  authors="Vaswani et al."
+  year={2017}
+  venue="NeurIPS"
+  url="https://arxiv.org/abs/1706.03762"
+/>
+
+<Reference
+  title="Rethinking Attention with Performers"
+  authors="Choromanski et al."
+  year={2021}
+  venue="ICLR"
+  url="https://arxiv.org/abs/2009.14794"
+/>

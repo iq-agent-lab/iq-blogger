@@ -38,6 +38,7 @@ import { loadProgress, formatStatusReport } from './progress';
 import { convertFolder } from './folder-converter';
 import { cloneOrPull } from './git-ops';
 import { convertRepo } from './repo-converter';
+import { deploy, revert } from './publisher';
 
 // Load .env from CWD, falling back to package root.
 loadEnv();
@@ -290,6 +291,8 @@ function printRootHelp(): void {
         '  validate        Check an existing .mdx against blog hard constraints',
         '  status          Show conversion progress across repos and folders',
         '  clone           Clone or update a source repo (testing)',
+        '  deploy          Deploy generated posts to blog (copy + commit + push)',
+        '  revert          Revert published posts (remove + commit + push)',
         '',
         'Run `tsx src/index.ts <command> --help` for command-specific options.',
       ].join('\n'),
@@ -328,6 +331,12 @@ async function main(): Promise<void> {
         break;
       case 'convert-repo':
         code = await cmdConvertRepo(args);
+        break;
+      case 'deploy':
+        code = await cmdDeploy(args);
+        break;
+      case 'revert':
+        code = await cmdRevert(args);
         break;
       default:
         console.error(`Unknown command: "${args.command}"`);
@@ -533,6 +542,201 @@ function printConvertRepoHelp(): void {
         '  tsx src/index.ts convert-repo iq-dev-lab/redis-deep-dive --only redis-internals',
       ].join('\n'),
   );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Command: deploy
+   ───────────────────────────────────────────────────────────── */
+
+async function cmdDeploy(args: Args): Promise<number> {
+  const targetPath = args.flags.target ?? process.env.IQ_PROOF_PATH;
+
+  if (!targetPath) {
+    console.error('Error: --target or IQ_PROOF_PATH env var required');
+    console.error('');
+    printDeployHelp();
+    return 2;
+  }
+
+  const expandedPath = expandHome(targetPath);
+
+  try {
+    console.error(`[publisher] Deploying to ${expandedPath}...`);
+
+    const result = await deploy({
+      targetPath: expandedPath,
+      repo: args.flags.repo,
+      dryRun: args.flags['dry-run'] === 'true',
+      skipGit: args.flags['skip-git'] === 'true',
+    });
+
+    if (result.copied.length === 0) {
+      console.error(`[publisher] No files to deploy.`);
+      return 0;
+    }
+
+    console.error('');
+    console.error(`[publisher] ✅ Deployed ${result.copied.length} file(s):`);
+    for (const file of result.copied) {
+      console.error(`  → ${file}`);
+    }
+
+    if (result.failed.length > 0) {
+      console.error('');
+      console.error(`[publisher] ❌ Failed ${result.failed.length} file(s):`);
+      for (const item of result.failed) {
+        console.error(`  ${item.file}: ${item.error}`);
+      }
+      return 1;
+    }
+
+    if (result.gitCommit) {
+      console.error('');
+      console.error(`[publisher] ✅ Committed: "${result.gitCommit}"`);
+    }
+
+    if (result.gitPushed) {
+      console.error(`[publisher] ✅ Pushed to GitHub`);
+      console.error(`[publisher] 🚀 GitHub Pages will rebuild in ~5 minutes`);
+      console.error(`[publisher] 💡 If issues found, use: tsx src/index.ts revert --repo ${args.flags.repo ?? '<repo>'}`);
+    }
+
+    return 0;
+  } catch (err) {
+    console.error(`[publisher] ❌ ${(err as Error).message}`);
+    return 1;
+  }
+}
+
+function printDeployHelp(): void {
+  console.error([
+    'Usage: tsx src/index.ts deploy [options]',
+    '',
+    'Deploy generated posts to the blog repo (full automation):',
+    '  1. Copy .mdx files from drafts/ to blog repo posts/',
+    '  2. Flip frontmatter draft: true → draft: false',
+    '  3. git add + commit + push (auto-deploy via GitHub Pages)',
+    '',
+    'Required:',
+    '  --target <path>     Blog repo root (or set IQ_PROOF_PATH env var)',
+    '',
+    'Optional:',
+    '  --repo <org/repo>   Only deploy posts from this source repo',
+    '  --dry-run           Show what would be done',
+    '  --skip-git          Copy + flip draft only, skip git operations',
+    '',
+    'Examples:',
+    '  tsx src/index.ts deploy --repo iq-ai-lab/transformer-deep-dive',
+    '  tsx src/index.ts deploy --dry-run',
+    '',
+    'Recovery:',
+    '  If a post needs retraction: tsx src/index.ts revert --repo <repo>',
+  ].join('\n'));
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Command: revert
+   ───────────────────────────────────────────────────────────── */
+
+async function cmdRevert(args: Args): Promise<number> {
+  const targetPath = args.flags.target ?? process.env.IQ_PROOF_PATH;
+
+  if (!targetPath) {
+    console.error('Error: --target or IQ_PROOF_PATH env var required');
+    console.error('');
+    printRevertHelp();
+    return 2;
+  }
+
+  if (!args.flags.repo && !args.flags.slug) {
+    console.error('Error: --repo or --slug required');
+    console.error('');
+    printRevertHelp();
+    return 2;
+  }
+
+  const expandedPath = expandHome(targetPath);
+
+  try {
+    console.error(`[publisher] Reverting from ${expandedPath}...`);
+
+    const result = await revert({
+      targetPath: expandedPath,
+      repo: args.flags.repo,
+      slug: args.flags.slug,
+      dryRun: args.flags['dry-run'] === 'true',
+      skipGit: args.flags['skip-git'] === 'true',
+    });
+
+    if (result.removed.length === 0) {
+      console.error(`[publisher] No matching posts to revert.`);
+      return 0;
+    }
+
+    console.error('');
+    console.error(`[publisher] ✅ Removed ${result.removed.length} file(s):`);
+    for (const file of result.removed) {
+      console.error(`  ✗ ${file}`);
+    }
+
+    if (result.failed.length > 0) {
+      console.error('');
+      console.error(`[publisher] ❌ Failed ${result.failed.length} file(s):`);
+      for (const item of result.failed) {
+        console.error(`  ${item.file}: ${item.error}`);
+      }
+      return 1;
+    }
+
+    if (result.gitCommit) {
+      console.error('');
+      console.error(`[publisher] ✅ Committed: "${result.gitCommit}"`);
+    }
+
+    if (result.gitPushed) {
+      console.error(`[publisher] ✅ Pushed to GitHub`);
+      console.error(`[publisher] 🚀 GitHub Pages will rebuild in ~5 minutes`);
+    }
+
+    return 0;
+  } catch (err) {
+    console.error(`[publisher] ❌ ${(err as Error).message}`);
+    return 1;
+  }
+}
+
+function printRevertHelp(): void {
+  console.error([
+    'Usage: tsx src/index.ts revert [options]',
+    '',
+    'Revert published posts (remove from blog + commit + push):',
+    '',
+    'Required (one of):',
+    '  --repo <org/repo>   Revert all posts from this source repo',
+    '  --slug <name>       Revert a single post by slug (e.g. ch7-llm-icl)',
+    '',
+    'Optional:',
+    '  --target <path>     Blog repo root (or set IQ_PROOF_PATH env var)',
+    '  --dry-run           Show what would be done',
+    '  --skip-git          Remove files only, skip git operations',
+    '',
+    'Examples:',
+    '  # Revert all transformer posts',
+    '  tsx src/index.ts revert --repo iq-ai-lab/transformer-deep-dive',
+    '',
+    '  # Revert a single post',
+    '  tsx src/index.ts revert --slug ch7-llm-icl',
+  ].join('\n'));
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Helper
+   ───────────────────────────────────────────────────────────── */
+
+function expandHome(path: string): string {
+  return path.startsWith('~')
+      ? path.replace(/^~/, process.env.HOME ?? '')
+      : path;
 }
 
 main();

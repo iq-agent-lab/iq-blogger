@@ -1,0 +1,125 @@
+---
+title: "Spring AOP는 왜 프록시 기반일까"
+description: "Self-invocation 문제의 근본 원인부터 AspectJ Weaving과의 트레이드오프까지, 프록시 AOP의 설계 결정을 추적한다."
+pubDate: 2026-04-17
+category: dev
+tags: [spring, aop, proxy, jvm]
+difficulty: intermediate
+series:
+  slug: spring-aop-internals
+  title: Spring AOP Internals
+  order: 1
+draft: false
+featured: true
+---
+
+import Callout from '@/components/mdx/Callout.astro';
+import Theorem from '@/components/mdx/Theorem.astro';
+import Proof from '@/components/mdx/Proof.astro';
+import Aside from '@/components/mdx/Aside.astro';
+import Collapse from '@/components/mdx/Collapse.astro';
+
+Spring AOP는 **런타임 프록시**를 기반으로 동작한다. AspectJ의 컴파일타임/로드타임 위빙과 달리, Spring은 대상 빈을 감싸는 프록시 객체를 생성해 어드바이스를 끼워 넣는다. 왜 이 선택을 했을까? 그리고 이 선택이 `this.method()` 호출에서 AOP가 무시되는 **self-invocation 문제**를 어떻게 만들어내는가?
+
+## 프록시 기반 설계의 출발점
+
+Spring이 프록시 방식을 선택한 이유는 **"Spring이라는 프레임워크의 제약 안에서 가장 덜 침습적인 AOP"**를 구현하기 위해서다. AspectJ Weaving을 쓰려면 컴파일러를 바꾸거나 (compile-time weaving) 클래스로더를 조작해야 (load-time weaving) 한다. Spring은 "IoC 컨테이너가 빈을 생성할 때 한 번만 개입한다"는 철학을 지키기 위해 프록시를 택했다.
+
+<Callout type="note" title="트레이드오프">
+프록시 방식은 **JVM 표준 메커니즘**만 사용하므로 이식성이 높다. 대신 self-invocation 문제와 `final` 클래스/메서드 불가 같은 제약이 따라붙는다.
+</Callout>
+
+## 프록시의 두 가지 구현
+
+Spring은 대상 빈의 성격에 따라 두 가지 프록시를 쓴다.
+
+```java
+// 1. JDK Dynamic Proxy — 인터페이스가 있을 때
+Proxy.newProxyInstance(
+    classLoader,
+    new Class[] { UserService.class },
+    invocationHandler
+);
+
+// 2. CGLIB — 클래스를 직접 상속 (인터페이스 없을 때)
+Enhancer enhancer = new Enhancer();
+enhancer.setSuperclass(UserServiceImpl.class);
+enhancer.setCallback(methodInterceptor);
+enhancer.create();
+```
+
+`spring.aop.proxy-target-class=true`로 설정하면 인터페이스 유무와 관계없이 CGLIB를 강제할 수 있다. Spring Boot 2.0부터는 이게 기본값이 됐는데, 이 결정의 배경도 나중 글에서 다룰 예정이다.
+
+## Self-Invocation 문제
+
+여기가 핵심이다.
+
+```java
+@Service
+public class OrderService {
+    @Transactional
+    public void placeOrder(Order order) {
+        validate(order);
+        save(order);
+    }
+
+    @Transactional(propagation = REQUIRES_NEW)
+    public void save(Order order) {
+        // ... save logic
+    }
+}
+```
+
+`placeOrder()` 안에서 `save()`를 호출하면 어떻게 될까? 직관적으로는 "`REQUIRES_NEW`니까 새 트랜잭션이 열리겠지"라고 생각하지만, **실제로는 열리지 않는다.**
+
+<Theorem kind="proposition" number="1" title="Self-invocation AOP bypass">
+프록시 기반 AOP에서, 같은 클래스의 메서드끼리 `this` 참조로 호출하면 어드바이스가 적용되지 않는다.
+</Theorem>
+
+<Proof>
+클라이언트가 `orderService.placeOrder(o)`를 호출할 때, `orderService`는 실제로 `OrderServiceProxy`다. 프록시의 `placeOrder()`는 어드바이스(트랜잭션 시작 → 원본 호출 → 커밋)를 수행한 뒤, 내부에서 **원본 인스턴스**의 `placeOrder()`를 호출한다.
+
+원본 `placeOrder()` 내부에서 `this.save()`를 실행하면, 이 `this`는 **프록시가 아닌 원본 인스턴스**다. 따라서 `save()` 호출은 프록시를 거치지 않고 직접 원본 메서드로 들어가며, AOP 체인이 우회된다.
+</Proof>
+
+## 해결책과 그 비용
+
+<Collapse title="해결책 1 — 자기 자신을 주입받기 (순환 참조 주의)">
+```java
+@Service
+public class OrderService {
+    @Autowired
+    private OrderService self;  // 프록시가 주입됨
+
+    @Transactional
+    public void placeOrder(Order order) {
+        validate(order);
+        self.save(order);  // 프록시를 거침
+    }
+}
+```
+간단하지만 코드 레벨에서 어색하고, 테스트 작성이 까다롭다.
+</Collapse>
+
+<Collapse title="해결책 2 — 클래스 분리 (Bob의 권장)">
+트랜잭션 경계가 다르다는 것 자체가 **책임이 다르다**는 신호일 수 있다. `OrderSaver`를 별도 클래스로 분리하면 자연스럽게 프록시를 거친다.
+</Collapse>
+
+<Collapse title="해결책 3 — AspectJ Weaving 전환">
+```java
+@EnableLoadTimeWeaving
+@Configuration
+public class AspectConfig { ... }
+```
+컴파일/로드 타임에 실제 바이트코드가 변경되므로 self-invocation이 해결된다. 단, 빌드 복잡도와 시작 시간이 올라간다.
+</Collapse>
+
+<Aside label="설계 의도">
+Spring이 self-invocation 문제를 "버그가 아닌 트레이드오프"로 유지하는 이유는, 프레임워크가 개발자의 `this` 의미론을 바꾸는 것이 더 침습적이기 때문이다. 명시적 설계보다 암묵적 마법을 피하는 기조가 드러난다.
+</Aside>
+
+## 정리
+
+프록시 AOP의 self-invocation 문제는 **버그가 아니라 설계의 귀결**이다. Spring은 JVM 메커니즘 내에서 동작하는 비침습적 AOP를 선택했고, 그 대가로 `this` 참조가 프록시를 우회한다. 이 트레이드오프를 알고 쓰는 것과 모르고 쓰는 것은 완전히 다르다.
+
+다음 글에서는 CGLIB가 `final` 메서드를 어떻게 처리하는지, 그리고 왜 Spring Boot 2.0부터 CGLIB가 기본값이 됐는지 추적한다.
