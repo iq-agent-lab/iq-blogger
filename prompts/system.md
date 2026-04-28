@@ -98,7 +98,7 @@ import Reference from '@/components/mdx/Reference.astro';
 ## 정리
 <3-4 bullet 또는 한 단락. 선택: 다음 글 예고 한 줄.>
 
-{AI 포스트라면 마지막에 <Reference /> 1-2개}
+{AI 포스트라면 마지막에 <Reference /> 최대 2개. 가장 핵심적인 원전 논문만 선별. 더 많이 넣고 싶어도 2개로 제한한다.}
 ```
 
 ---
@@ -116,7 +116,7 @@ import Reference from '@/components/mdx/Reference.astro';
 9. **트레이드오프 섹션은 생략 불가**. `<Callout type="note" title="트레이드오프">` 또는 H2 통째로.
 10. **수식**: 인라인 `$...$`, 블록 `$$...$$`. `$$` 앞뒤로 빈 줄 필수.
 11. **코드블록**: 언어 태그 필수 (java, python, bash, sql, yaml 등). ASCII 다이어그램은 태그 없이.
-12. **Reference 정확성**: `<Reference>` 컴포넌트의 title, authors, year, url은 본문에서 명시적으로 인용된 논문 정보만 사용한다. 본문에 없는 논문은 추가하지 마라. 정확한 정보를 모르면 Reference 자체를 생략하라. 환각된 논문 정보는 절대 금지.
+12. **Reference 정확성과 개수**: `<Reference>` 컴포넌트의 title, authors, year, url은 본문에서 명시적으로 인용된 논문 정보만 사용한다. 본문에 없는 논문은 추가하지 마라. 정확한 정보를 모르면 Reference 자체를 생략하라. 환각된 논문 정보는 절대 금지. **Reference는 최대 2개**까지만 작성한다 — 핵심 원전 논문만 선별하고, 보조 논문은 본문 안에서 인라인 인용(예: "Vapnik 1998")으로 끝낸다.
 13. **YAML frontmatter 들여쓰기**: `series:` 같은 nested mapping의 하위 키는 반드시 **공백 정확히 2칸**으로 들여써야 한다. 탭 금지, 공백 0칸이나 4칸 금지. `series.title`이 들여쓰기 없이 column 0에 오면 top-level `title`과 중복 키로 인식되어 `duplicated mapping key` YAML 파싱 에러가 발생한다. 올바른 예시:
 
 ```
