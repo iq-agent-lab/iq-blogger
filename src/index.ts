@@ -164,7 +164,7 @@ async function cmdConvert(args: Args): Promise<number> {
     await writeFile(outPath, result.mdx, 'utf-8');
     console.error('');
     console.error(`[iq-blogger] Wrote ${outPath}`);
-    console.error(`[iq-blogger] Attempts: ${result.history.length} | Tokens: in=${result.usage.inputTokens}, out=${result.usage.outputTokens} | Cost: $${result.usage.estimatedCostUsd.toFixed(4)}`);
+    console.error(`[iq-blogger] Attempts: ${result.history.length} | Tokens: in=${result.usage.inputTokens}, cache_w=${result.usage.cacheCreationTokens}, cache_r=${result.usage.cacheReadTokens}, out=${result.usage.outputTokens} | Cost: $${result.usage.estimatedCostUsd.toFixed(4)}`);
     console.error(`[iq-blogger] Metrics: ${JSON.stringify(result.history.at(-1)?.validation.metrics)}`);
   } else {
     // Stdout — useful for piping.
