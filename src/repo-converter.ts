@@ -187,7 +187,7 @@ export async function convertRepo(options: RepoConvertOptions): Promise<RepoConv
  *   - Must contain at least one chapter file (NN-name.md)
  *   - Sorted naturally (ch1, ch2, ..., ch10, ch11)
  */
-async function discoverFolders(repoPath: string): Promise<string[]> {
+export async function discoverFolders(repoPath: string): Promise<string[]> {
   const entries = await readdir(repoPath);
   const candidates: string[] = [];
 

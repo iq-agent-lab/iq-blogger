@@ -38,6 +38,7 @@ import { loadProgress, formatStatusReport } from './progress';
 import { convertFolder } from './folder-converter';
 import { cloneOrPull } from './git-ops';
 import { convertRepo } from './repo-converter';
+import { convertBatch } from './batch-converter';
 import { deploy, revert } from './publisher';
 
 // Load .env from CWD, falling back to package root.
@@ -288,6 +289,7 @@ function printRootHelp(): void {
         '  convert         Convert a single .md file to .mdx blog post (translation)',
         '  convert-folder  Synthesize a folder of chapters into one .mdx (synthesis)',
         '  convert-repo    Clone a repo and convert all folders (full automation)',
+        '  convert-batch   Convert N repos in one Anthropic batch (50% cheaper, async)',
         '  validate        Check an existing .mdx against blog hard constraints',
         '  status          Show conversion progress across repos and folders',
         '  clone           Clone or update a source repo (testing)',
@@ -331,6 +333,9 @@ async function main(): Promise<void> {
         break;
       case 'convert-repo':
         code = await cmdConvertRepo(args);
+        break;
+      case 'convert-batch':
+        code = await cmdConvertBatch(args);
         break;
       case 'deploy':
         code = await cmdDeploy(args);
@@ -540,6 +545,102 @@ function printConvertRepoHelp(): void {
         'Examples:',
         '  tsx src/index.ts convert-repo iq-ai-lab/transformer-deep-dive',
         '  tsx src/index.ts convert-repo iq-dev-lab/redis-deep-dive --only redis-internals',
+      ].join('\n'),
+  );
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Command: convert-batch
+   ───────────────────────────────────────────────────────────── */
+
+async function cmdConvertBatch(args: Args): Promise<number> {
+  if (args.positional.length === 0) {
+    console.error('Error: convert-batch requires at least one source argument.');
+    console.error('');
+    printConvertBatchHelp();
+    return 2;
+  }
+
+  // Validate all source formats (org/repo)
+  for (const source of args.positional) {
+    if (!source.includes('/') || source.split('/').length !== 2) {
+      console.error(`Error: source must be in "org/repo" format, got "${source}"`);
+      return 2;
+    }
+  }
+
+  // --only applies to all repos (filter by folder name across the batch)
+  const onlyFolder = args.flags.only;
+  const onlyFolders = onlyFolder
+      ? Object.fromEntries(args.positional.map((s) => [s, [onlyFolder]]))
+      : undefined;
+
+  try {
+    const summary = await convertBatch({
+      sources: args.positional,
+      onlyFolders,
+      outDir: args.flags.out,
+      skipIfDone: args.flags.force !== 'true',
+      forceClone: args.flags['force-clone'] === 'true',
+      noFallback: args.flags['no-fallback'] === 'true',
+      date: args.flags.date,
+    });
+
+    // Print summary
+    console.error('');
+    console.error('━'.repeat(50));
+    console.error(`Batch summary (batch_id: ${summary.batchId || 'n/a'}):`);
+    console.error(`  Repos:           ${summary.totalRepos}`);
+    console.error(`  Folders:         ${summary.totalFolders}`);
+    console.error(`  ✅ Done:          ${summary.done}`);
+    console.error(`  ⏭️  Skipped:       ${summary.skipped}`);
+    console.error(`  ❌ Failed:        ${summary.failed}`);
+    if (summary.fallbackInvoked > 0) {
+      console.error(`  ⚠️  Fallback used: ${summary.fallbackInvoked} (sync retry on batch failures)`);
+    }
+    console.error(`  Total cost:      $${summary.totalCost.toFixed(2)}`);
+    console.error(`  Duration:        ${(summary.durationMs / 1000).toFixed(1)}s`);
+
+    return summary.failed > 0 ? 1 : 0;
+  } catch (err) {
+    console.error('');
+    console.error(`[iq-blogger] ❌ Failed: ${(err as Error).message}`);
+    return 1;
+  }
+}
+
+function printConvertBatchHelp(): void {
+  console.error(
+      [
+        'Usage: tsx src/index.ts convert-batch <repo1> [repo2 ...] [options]',
+        '',
+        'Submits ALL listed repos × their folders as a single Anthropic Message Batch.',
+        'Batch API gives 50% off all token usage; combined with prompt caching,',
+        '~57% total cost reduction vs sync convert-repo.',
+        '',
+        'Trade-off: typical completion <1h, max 24h. No real-time per-folder logs.',
+        '',
+        'Required:',
+        '  <repo1> [repo2 ...]  one or more "org/repo" identifiers',
+        '',
+        'Optional flags:',
+        '  --only <folder>      restrict to this folder name in EACH repo',
+        '  --out <dir>          output directory (default: ./drafts)',
+        '  --force              re-convert folders that are already done',
+        '  --force-clone        delete cache and re-clone repos',
+        '  --no-fallback        treat batch failures as terminal (no sync retry)',
+        '  --date <YYYY-MM-DD>  override pubDate (default: today)',
+        '',
+        'Examples:',
+        '  # Single repo through the batch path (good for testing)',
+        '  tsx src/index.ts convert-batch iq-ai-lab/foo-deep-dive --only ch1-setup',
+        '',
+        '  # Multiple repos, all folders',
+        '  tsx src/index.ts convert-batch \\',
+        '    iq-ai-lab/foo-deep-dive iq-ai-lab/bar-deep-dive iq-dev-lab/baz-deep-dive',
+        '',
+        'After completion, run `deploy --repo <each-repo>` per repo for review/publish',
+        '(deploy stays per-repo so you keep the manual review workflow).',
       ].join('\n'),
   );
 }

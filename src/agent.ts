@@ -408,3 +408,76 @@ function estimateCost(
 
 export { parseMdx, tryParseMdx, validate } from './validator';
 export type { ParsedMdx };
+
+/* ─────────────────────────────────────────────────────────────
+   Batch API helpers — used by batch-converter.ts.
+   These expose the same prompt-construction + cost logic as convert(),
+   but split so the caller can build many requests at once for the
+   Message Batches API instead of one synchronous call.
+   ───────────────────────────────────────────────────────────── */
+
+export interface AgentPrompts {
+  systemPrompt: string;
+  fewShotPrompt: string;
+}
+
+export interface AgentRequestParams {
+  model: string;
+  max_tokens: number;
+  system: string;
+  messages: Anthropic.MessageParam[];
+}
+
+/**
+ * Load system + few-shot prompts. Call once and reuse for many batch items.
+ */
+export async function loadAgentPrompts(promptsDir?: string): Promise<AgentPrompts> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const dir = promptsDir ?? resolve(here, '../prompts');
+  return loadPrompts(dir);
+}
+
+/**
+ * Build the messages.create() / batch request params for one ConversionInput.
+ * Sync path: pass to client.messages.create() directly.
+ * Batch path: wrap as `{ custom_id, params }` inside batches.create({ requests }).
+ */
+export function buildAgentRequestParams(
+  input: ConversionInput,
+  prompts: AgentPrompts,
+  config: { model?: string; maxTokens?: number } = {},
+): AgentRequestParams {
+  const model = config.model ?? process.env.IQ_BLOGGER_MODEL ?? 'claude-sonnet-4-6';
+  const maxTokens = config.maxTokens ?? 4096;
+  return {
+    model,
+    max_tokens: maxTokens,
+    system: prompts.systemPrompt,
+    messages: [
+      { role: 'user', content: buildInitialUserMessage(input, prompts.fewShotPrompt) },
+    ],
+  };
+}
+
+/**
+ * Pull the MDX text out of a Message (sync or batch result).
+ * Same behavior as the sync agent: strips wrapping code fences + trailing whitespace.
+ */
+export function extractMdxFromMessage(message: Anthropic.Message): string {
+  return extractTextContent(message);
+}
+
+/**
+ * Per-message cost estimate (input + output + cache write/read).
+ * For batch results: the 50% batch discount is NOT applied here — caller should
+ * multiply the result by 0.5 if the message came from the Batch API.
+ */
+export function estimateMessageCost(model: string, usage: Anthropic.Usage): number {
+  return estimateCost(
+    model,
+    usage.input_tokens,
+    usage.output_tokens,
+    usage.cache_creation_input_tokens ?? 0,
+    usage.cache_read_input_tokens ?? 0,
+  );
+}
