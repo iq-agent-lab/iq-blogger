@@ -126,6 +126,32 @@ import Reference from '@/components/mdx/Reference.astro';
       order: 7
 ```
 
+14. **MDX expression escape (CRITICAL — 빌드 실패 방지)**: MDX 파서는 본문/헤더의 `{...}` 를 JSX expression으로 해석하므로, 코드/수식 컨텍스트가 아닌 곳에서 literal 중괄호가 등장하면 반드시 **백틱으로 감싸야** 한다. 위반 시 `ReferenceError: <name> is not defined` 또는 `Could not parse expression with acorn` 빌드 에러.
+
+   **반드시 백틱으로 감쌀 패턴 (예시)**:
+   - 변수 표기: `V{n+1}`, `f(x)` (식별자 + `{...}`)
+   - 환경변수 / 템플릿: `${HOME}`, `${server.port}`
+   - SpEL / 표현식: `#{@bean}`, `#{...}`
+   - 단독 placeholder: `{cipher}`, `{name}`, `{value}`
+
+   **올바른 예시**:
+   ```
+   ## ❌ ${...}와 #{...}의 처리 시점        ← 빌드 실패
+   ## ✅ `${...}`와 `#{...}`의 처리 시점     ← OK
+
+   본문에 V{n+1}에서 고친다.                ← 빌드 실패 (n undefined)
+   본문에 `V{n+1}`에서 고친다.              ← OK
+
+   ## ❌ {cipher} 접두사로 암호화           ← 빌드 실패 (cipher undefined)
+   ## ✅ `{cipher}` 접두사로 암호화         ← OK
+   ```
+
+   **예외 (escape 불필요)**:
+   - 코드 펜스 안: ```` ```yaml ${env}` ``` ``` (펜스 안은 literal)
+   - 인라인 코드: `` `${env}` `` (이미 백틱)
+   - LaTeX 수식 안: `$\frac{a}{b}$` (`$...$` 안은 KaTeX 처리)
+   - JSX prop 의도: `<Foo bar={value} />` (의도적 expression)
+
 ---
 
 ## Section mapping (decision table)

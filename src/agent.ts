@@ -117,7 +117,10 @@ export async function convert(input: ConversionInput, config: AgentConfig = {}):
 
     const response = await client.messages.create({
       model: cfg.model,
-      max_tokens: 4096,
+      // 16384: 평균 출력은 ~3.5K지만 retry 메시지가 누적되면서 길어질 수 있고,
+      // 일부 폴더(긴 chapters)는 4096에 도달해 마지막 줄이 잘려 빌드 실패 유발.
+      // 16384로 두 배 여유 + Sonnet 4.6 안전 영역 안에 머문다 (timeout 위험 없음).
+      max_tokens: 16384,
       system: systemPrompt,
       messages,
     });
@@ -448,7 +451,7 @@ export function buildAgentRequestParams(
   config: { model?: string; maxTokens?: number } = {},
 ): AgentRequestParams {
   const model = config.model ?? process.env.IQ_BLOGGER_MODEL ?? 'claude-sonnet-4-6';
-  const maxTokens = config.maxTokens ?? 4096;
+  const maxTokens = config.maxTokens ?? 16384; // sync convert()와 일치 — 절단 방지
   return {
     model,
     max_tokens: maxTokens,
