@@ -62,10 +62,14 @@ export async function cloneOrPull(options: CloneOptions): Promise<CloneResult> {
   if (!exists || options.force) {
     // Fresh clone
     await mkdir(dirname(repoPath), { recursive: true });
-    const url = buildGitUrl(options.source, token);
+    const url = buildGitUrl(options.source);
 
     console.error(`[git-ops] Cloning ${options.source}...`);
-    await runCommand('git', ['clone', '--depth=1', url, repoPath]);
+    await runCommand(
+      'git',
+      [...authArgs(token), 'clone', '--depth=1', url, repoPath],
+      { env: authEnv(token) },
+    );
 
     return {
       path: repoPath,
@@ -78,7 +82,11 @@ export async function cloneOrPull(options: CloneOptions): Promise<CloneResult> {
   console.error(`[git-ops] Updating ${options.source} (cache hit)...`);
 
   // Fetch latest, reset to upstream HEAD (handles force-pushed branches)
-  await runCommand('git', ['-C', repoPath, 'fetch', 'origin'], { silent: true });
+  await runCommand(
+    'git',
+    [...authArgs(token), '-C', repoPath, 'fetch', 'origin'],
+    { silent: true, env: authEnv(token) },
+  );
 
   // Get default branch name (main, master, etc.)
   const branch = await getDefaultBranch(repoPath);
@@ -111,15 +119,53 @@ export function getCachedPath(source: string, cacheDir: string = '.cache/sources
    ───────────────────────────────────────────────────────────── */
 
 /**
- * Build the git clone URL.
- * If token is provided, use https with token (avoids rate limit, supports private repos).
- * Otherwise use plain https.
+ * Build the git clone URL — always plain https (no PAT in URL).
+ *
+ * Token authentication is handled separately via credential helper
+ * (see `authArgs` + `authEnv`) so the PAT never appears in:
+ *   - the URL itself (visible in stderr / process listings)
+ *   - the args array (visible in stderr error messages, ps output)
+ *   - the cloned repo's `.git/config` `[remote "origin"] url`
+ *
+ * Previously this function embedded the token like
+ * `https://${token}@github.com/...`, which leaked the PAT to stderr
+ * any time `git clone` failed (e.g. 'Repository not found') because
+ * git echoes the failed URL verbatim.
  */
-function buildGitUrl(source: string, token?: string): string {
-  if (token) {
-    return `https://${token}@github.com/${source}.git`;
-  }
+function buildGitUrl(source: string): string {
   return `https://github.com/${source}.git`;
+}
+
+/**
+ * Git CLI args that wire up an inline credential helper.
+ * The token is read from the process env var `IQ_BLOGGER_GIT_TOKEN` —
+ * the helper script itself contains no secrets, only a reference.
+ *
+ * Pattern:
+ *   1. `credential.helper=`     → wipe inherited helpers (system git config)
+ *   2. `credential.helper=!f() {...}` → register our inline helper
+ *
+ * The `sleep 1` gives git time to read both lines before the subshell
+ * exits — without it git can race the helper and miss the password.
+ */
+function authArgs(token?: string): string[] {
+  if (!token) return [];
+  return [
+    '-c', 'credential.helper=',
+    '-c',
+    'credential.helper=!f() { sleep 1; echo "username=x-access-token"; echo "password=${IQ_BLOGGER_GIT_TOKEN}"; }; f',
+  ];
+}
+
+/**
+ * Env vars to pass alongside `authArgs`.
+ * - `IQ_BLOGGER_GIT_TOKEN`: the actual PAT, only readable by the spawned git process
+ * - `GIT_TERMINAL_PROMPT=0`: never prompt interactively (fail fast on auth error)
+ */
+function authEnv(token?: string): Record<string, string> {
+  const base = { GIT_TERMINAL_PROMPT: '0' };
+  if (!token) return base;
+  return { ...base, IQ_BLOGGER_GIT_TOKEN: token };
 }
 
 /**
@@ -160,6 +206,8 @@ interface CommandOptions {
   capture?: boolean;
   /** Suppress live output forwarding. Default: false. */
   silent?: boolean;
+  /** Extra env vars merged into process.env for the spawned process. */
+  env?: Record<string, string>;
 }
 
 function runCommand(
@@ -170,6 +218,7 @@ function runCommand(
   return new Promise((resolveFn, rejectFn) => {
     const child = spawn(cmd, args, {
       stdio: options.capture ? ['ignore', 'pipe', 'pipe'] : (options.silent ? 'ignore' : 'inherit'),
+      env: options.env ? { ...process.env, ...options.env } : process.env,
     });
 
     let stdout = '';
