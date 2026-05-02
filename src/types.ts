@@ -142,6 +142,10 @@ export type ConversionResult =
   usage: {
     inputTokens: number;
     outputTokens: number;
+    /** Tokens written to prompt cache (billed at write multiplier). */
+    cacheCreationTokens: number;
+    /** Tokens served from prompt cache (billed at ~0.1x base price). */
+    cacheReadTokens: number;
     estimatedCostUsd: number;
   };
 }

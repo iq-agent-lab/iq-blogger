@@ -196,7 +196,7 @@ export async function convertFolder(options: FolderConvertOptions): Promise<Fold
  *   - Exclude README.md and other non-numbered files
  *   - Sort naturally (01, 02, ..., 10, 11) not alphabetically
  */
-async function discoverChapters(folderPath: string): Promise<string[]> {
+export async function discoverChapters(folderPath: string): Promise<string[]> {
   let entries: string[];
   try {
     entries = await readdir(folderPath);
@@ -218,7 +218,7 @@ async function discoverChapters(folderPath: string): Promise<string[]> {
  * Read all chapter files and concatenate them with delimiters.
  * Each chapter gets a clear header so the LLM can recognize boundaries.
  */
-async function concatenateChapters(folderPath: string, chapterFiles: string[]): Promise<string> {
+export async function concatenateChapters(folderPath: string, chapterFiles: string[]): Promise<string> {
   const parts: string[] = [];
 
   for (const filename of chapterFiles) {

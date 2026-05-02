@@ -99,8 +99,11 @@ export async function convert(input: ConversionInput, config: AgentConfig = {}):
   const history: ConversionAttempt[] = [];
   let totalInputTokens = 0;
   let totalOutputTokens = 0;
+  let totalCacheCreationTokens = 0;
+  let totalCacheReadTokens = 0;
 
-  // Build initial user message.
+  // Block 1 (few-shot) is marked for cache; block 2 (task+chapters) is not.
+  // See buildInitialUserMessage for the cost reasoning.
   const initialUserMessage = buildInitialUserMessage(input, fewShotPrompt);
 
   // Messages accumulate across retries so Claude sees its own previous output
@@ -121,13 +124,17 @@ export async function convert(input: ConversionInput, config: AgentConfig = {}):
 
     totalInputTokens += response.usage.input_tokens;
     totalOutputTokens += response.usage.output_tokens;
+    totalCacheCreationTokens += response.usage.cache_creation_input_tokens ?? 0;
+    totalCacheReadTokens += response.usage.cache_read_input_tokens ?? 0;
 
     const mdx = extractTextContent(response);
     const validation = validate(mdx);
 
     if (cfg.debug) {
+      const cw = response.usage.cache_creation_input_tokens ?? 0;
+      const cr = response.usage.cache_read_input_tokens ?? 0;
       console.error(
-        `[iq-blogger] Attempt ${attempt}: ${validation.ok ? 'PASS' : 'FAIL'} (${validation.metrics.wordCount} words, ${validation.metrics.h2Count} H2s, ${validation.issues.length} issues)`,
+        `[iq-blogger] Attempt ${attempt}: ${validation.ok ? 'PASS' : 'FAIL'} (${validation.metrics.wordCount} words, ${validation.metrics.h2Count} H2s, ${validation.issues.length} issues) | tokens: in=${response.usage.input_tokens} cache_w=${cw} cache_r=${cr} out=${response.usage.output_tokens}`,
       );
     }
 
@@ -156,7 +163,15 @@ export async function convert(input: ConversionInput, config: AgentConfig = {}):
         usage: {
           inputTokens: totalInputTokens,
           outputTokens: totalOutputTokens,
-          estimatedCostUsd: estimateCost(cfg.model, totalInputTokens, totalOutputTokens),
+          cacheCreationTokens: totalCacheCreationTokens,
+          cacheReadTokens: totalCacheReadTokens,
+          estimatedCostUsd: estimateCost(
+            cfg.model,
+            totalInputTokens,
+            totalOutputTokens,
+            totalCacheCreationTokens,
+            totalCacheReadTokens,
+          ),
         },
       };
     }
@@ -220,16 +235,34 @@ async function loadPrompts(promptsDir: string): Promise<LoadedPrompts> {
    ───────────────────────────────────────────────────────────── */
 
 /**
- * Build the first user message — contains the input metadata, the few-shot
- * examples, and the source document.
+ * Build the first user message as two blocks, with cache_control on block 1 only.
+ *
+ * Block layout (rendered order: tools → system → messages):
+ *   - system prompt (no marker; covered by block 1's marker)
+ *   - block 1: few-shot examples + section header
+ *       → cache_control marker. Cache key = bytes of (system + block 1).
+ *       → Identical across all folders/repos → cross-call cache hit.
+ *   - block 2: task instructions + source document (chapters) — NO marker
+ *       → Chapters vary per folder, so caching this prefix only helps within-folder
+ *         retries (~12.5% of folders). The 2x write multiplier on every folder
+ *         outweighs the read savings on the rare retry, so leaving it uncached.
+ *
+ * TTL is 1 hour: break-even is 3 requests (we run 7+ per repo, more in batch),
+ * and the longer window survives Phase 2 batch queue delays.
  */
-function buildInitialUserMessage(input: ConversionInput, fewShotPrompt: string): string {
-  return [
+function buildInitialUserMessage(
+  input: ConversionInput,
+  fewShotPrompt: string,
+): Anthropic.ContentBlockParam[] {
+  const fewShotSection = [
     '# Few-shot examples',
     '',
     'Study these examples carefully. Your output must match their style.',
     '',
     fewShotPrompt,
+  ].join('\n');
+
+  const taskSection = [
     '',
     '---',
     '',
@@ -251,6 +284,18 @@ function buildInitialUserMessage(input: ConversionInput, fewShotPrompt: string):
     '',
     input.content,
   ].join('\n');
+
+  return [
+    {
+      type: 'text',
+      text: fewShotSection,
+      cache_control: { type: 'ephemeral', ttl: '1h' },
+    },
+    {
+      type: 'text',
+      text: taskSection,
+    },
+  ];
 }
 
 /**
@@ -327,10 +372,33 @@ export function slugFromTitle(_title: string, input: ConversionInput): string {
    Cost estimation
    ───────────────────────────────────────────────────────────── */
 
-function estimateCost(model: string, inputTokens: number, outputTokens: number): number {
+/**
+ * Multipliers applied to base input price. Anthropic pricing model:
+ *   - Cache write (1h TTL): 2.0x base input
+ *   - Cache read           : 0.1x base input
+ *   - Uncached input       : 1.0x base input
+ */
+const CACHE_WRITE_MULTIPLIER_1H = 2.0;
+const CACHE_READ_MULTIPLIER = 0.1;
+
+function estimateCost(
+  model: string,
+  inputTokens: number,
+  outputTokens: number,
+  cacheCreationTokens: number,
+  cacheReadTokens: number,
+): number {
   const pricing = MODEL_PRICING[model];
   if (!pricing) return 0;
-  return (inputTokens / 1_000_000) * pricing.inputPerMTok + (outputTokens / 1_000_000) * pricing.outputPerMTok;
+
+  const inputCost = (inputTokens / 1_000_000) * pricing.inputPerMTok;
+  const cacheWriteCost =
+    (cacheCreationTokens / 1_000_000) * pricing.inputPerMTok * CACHE_WRITE_MULTIPLIER_1H;
+  const cacheReadCost =
+    (cacheReadTokens / 1_000_000) * pricing.inputPerMTok * CACHE_READ_MULTIPLIER;
+  const outputCost = (outputTokens / 1_000_000) * pricing.outputPerMTok;
+
+  return inputCost + cacheWriteCost + cacheReadCost + outputCost;
 }
 
 /* ─────────────────────────────────────────────────────────────
@@ -340,3 +408,76 @@ function estimateCost(model: string, inputTokens: number, outputTokens: number):
 
 export { parseMdx, tryParseMdx, validate } from './validator';
 export type { ParsedMdx };
+
+/* ─────────────────────────────────────────────────────────────
+   Batch API helpers — used by batch-converter.ts.
+   These expose the same prompt-construction + cost logic as convert(),
+   but split so the caller can build many requests at once for the
+   Message Batches API instead of one synchronous call.
+   ───────────────────────────────────────────────────────────── */
+
+export interface AgentPrompts {
+  systemPrompt: string;
+  fewShotPrompt: string;
+}
+
+export interface AgentRequestParams {
+  model: string;
+  max_tokens: number;
+  system: string;
+  messages: Anthropic.MessageParam[];
+}
+
+/**
+ * Load system + few-shot prompts. Call once and reuse for many batch items.
+ */
+export async function loadAgentPrompts(promptsDir?: string): Promise<AgentPrompts> {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const dir = promptsDir ?? resolve(here, '../prompts');
+  return loadPrompts(dir);
+}
+
+/**
+ * Build the messages.create() / batch request params for one ConversionInput.
+ * Sync path: pass to client.messages.create() directly.
+ * Batch path: wrap as `{ custom_id, params }` inside batches.create({ requests }).
+ */
+export function buildAgentRequestParams(
+  input: ConversionInput,
+  prompts: AgentPrompts,
+  config: { model?: string; maxTokens?: number } = {},
+): AgentRequestParams {
+  const model = config.model ?? process.env.IQ_BLOGGER_MODEL ?? 'claude-sonnet-4-6';
+  const maxTokens = config.maxTokens ?? 4096;
+  return {
+    model,
+    max_tokens: maxTokens,
+    system: prompts.systemPrompt,
+    messages: [
+      { role: 'user', content: buildInitialUserMessage(input, prompts.fewShotPrompt) },
+    ],
+  };
+}
+
+/**
+ * Pull the MDX text out of a Message (sync or batch result).
+ * Same behavior as the sync agent: strips wrapping code fences + trailing whitespace.
+ */
+export function extractMdxFromMessage(message: Anthropic.Message): string {
+  return extractTextContent(message);
+}
+
+/**
+ * Per-message cost estimate (input + output + cache write/read).
+ * For batch results: the 50% batch discount is NOT applied here — caller should
+ * multiply the result by 0.5 if the message came from the Batch API.
+ */
+export function estimateMessageCost(model: string, usage: Anthropic.Usage): number {
+  return estimateCost(
+    model,
+    usage.input_tokens,
+    usage.output_tokens,
+    usage.cache_creation_input_tokens ?? 0,
+    usage.cache_read_input_tokens ?? 0,
+  );
+}
