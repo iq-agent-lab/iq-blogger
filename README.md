@@ -58,20 +58,19 @@
 
 ---
 
-## ✅ Status — Validated
+## ✅ Status — Production Validated
 
-| 도메인 | 레포 | 폴더 | 챕터 | 결과 |
-|:---|:---|:---:|:---:|:---:|
-| Dev | redis-deep-dive | redis-internals | 5 | ✅ 624w, 1 attempt, $0.23 |
-| AI | transformer-deep-dive | ch1-attention-decomposition | 6 | ✅ 803w, 1 attempt, $0.22 |
-| AI | transformer-deep-dive | ch2-transformer-architecture | 5 | ✅ 751w, 1 attempt, $0.21 |
-| AI | transformer-deep-dive | ch3-positional-encoding | 5 | ✅ 732w, 1 attempt, $0.21 |
-| AI | transformer-deep-dive | ch4-training-math | 5 | ✅ 830w, 1 attempt, $0.20 |
-| AI | transformer-deep-dive | ch5-attention-efficiency | 6 | ✅ 883w, 1 attempt, $0.25 |
-| AI | transformer-deep-dive | ch6-modern-architectures | 5 | ✅ 796w, 1 attempt, $0.21 |
-| AI | transformer-deep-dive | ch7-llm-icl | 4 | ✅ 959w, 1 attempt, $0.19 |
+본격 양산 결과 (iq-dev-lab 34 레포):
 
-**8/8 폴더 첫 시도 통과 (재시도 0%). 평균 $0.215/폴더, 1분 9초/폴더.**
+| 단계 | 레포 | 폴더 | 첫 시도 통과 | 비용 | 비고 |
+|:---|:---:|:---:|:---:|:---:|:---|
+| Smoke (sync) | 1 | 1 | 100% | $0.21 | redis (이전 검증) |
+| Batch #1 | 3 | 21 | 100% | $1.81 | kafka, rabbitmq, grpc |
+| Batch #2 | 31 | 218 | 99.5% | $24.87 | spring/infra/db/security 등, fallback 12회 |
+| Batch #3 | 1 | 14 | 36% | $5.56 | java-api-reference (API 스타일, fallback 9회) |
+| **누적** | **34** | **254** | **~95%** | **~$33** | 1건 재시도 후 100% |
+
+**평균 $0.13/폴더 (sync + caching + batch). 8/8 검증 시점 $0.215/폴더 대비 ~60% 절감.**
 
 ---
 
@@ -79,10 +78,13 @@
 
 ```mermaid
 graph LR
-    A[GitHub source repo] --> B[git-ops: clone or pull]
-    B --> C[repo-converter: discover folders]
-    C --> D[folder-converter: synthesize]
-    D --> E[agent: Claude API call]
+    A[GitHub source repos] --> B[git-ops: clone or pull]
+    B --> C{Mode?}
+    C -->|repo-converter| D[Sync API call]
+    C -->|batch-converter| BATCH[Batch API: N reqs]
+    BATCH --> POLL[Poll until ended]
+    POLL --> D
+    D --> E[agent + cache_control]
     E --> F[validator: 12 constraints]
     F -->|Pass| G[Write .mdx to drafts/]
     F -->|Fail, retry up to 3| E
@@ -90,6 +92,7 @@ graph LR
     H --> I[Live on iq-proof.github.io]
 
     style A fill:#fce4ec,stroke:#cc785c,stroke-width:2px
+    style BATCH fill:#fff8e1,stroke:#f9a825,stroke-width:2px
     style E fill:#fff3e0,stroke:#cc785c,stroke-width:2px
     style F fill:#e8f5e9,stroke:#cc785c,stroke-width:2px
     style G fill:#e3f2fd,stroke:#cc785c,stroke-width:2px
@@ -100,15 +103,16 @@ graph LR
 
 | 파일 | 역할 |
 |:---|:---|
-| `src/agent.ts` | Claude API 호출 + 재시도 루프 |
+| `src/agent.ts` | Claude API 호출 + 재시도 루프 + prompt caching (1h TTL) |
 | `src/validator.ts` | 12개 검증 규칙 (error + warning 2-tier) |
-| `src/folder-converter.ts` | 폴더 5-7 챕터를 1개 종합 글로 |
-| `src/repo-converter.ts` | 레포 단위 — 모든 폴더 자동 발견 + 처리 |
+| `src/folder-converter.ts` | 폴더 5-7 챕터를 1개 종합 글로 (sync) |
+| `src/repo-converter.ts` | 레포 단위 — 모든 폴더 자동 발견 + 처리 (sync) |
+| `src/batch-converter.ts` | **N 레포를 단일 Batch API 요청으로 일괄 처리** (50% 할인) |
 | `src/git-ops.ts` | GitHub 자동 클론 + 캐싱 (`.cache/sources/`) |
 | `src/progress.ts` | 진행 상태 추적 (`drafts/progress.json`) |
 | `src/publisher.ts` | 배포 — drafts → blog → commit → push |
 | `src/types.ts` | Zod 스키마 + 공유 타입 |
-| `src/index.ts` | CLI: 8개 명령어 |
+| `src/index.ts` | CLI: 9개 명령어 |
 | `prompts/system.md` | 합성 system prompt |
 | `prompts/few-shot.md` | 변환 예시 (Spring AOP, Attention, Redis) |
 
@@ -189,10 +193,12 @@ npm run lint   # tsc --noEmit, 타입 에러 없음
 
 ## 💻 Usage
 
-### 양산 워크플로우 (3단계)
+### 양산 워크플로우
+
+#### A. 단일 레포 양산 (실시간 피드백, 즉시 deploy)
 
 ```bash
-# 1. 양산 — 레포 자동 클론 + 모든 폴더 종합
+# 1. 양산 — 레포 자동 클론 + 모든 폴더 sync 변환
 npx tsx src/index.ts convert-repo iq-ai-lab/<레포명>
 
 # 2. 진행 확인
@@ -202,11 +208,30 @@ npx tsx src/index.ts status
 npx tsx src/index.ts deploy --repo iq-ai-lab/<레포명>
 ```
 
+#### B. 대량 양산 (Batch — 50% 할인, async)
+
+```bash
+# 1. N 레포를 단일 Anthropic Batch로 제출 (보통 1시간 내, 최대 24h)
+npx tsx src/index.ts convert-batch \
+  iq-dev-lab/spring-core-deep-dive \
+  iq-dev-lab/redis-deep-dive \
+  iq-dev-lab/kafka-deep-dive \
+  ...
+
+# 2. 완료되면 레포별로 검토 + 배포 (deploy는 그대로 레포 단위)
+npx tsx src/index.ts deploy --repo iq-dev-lab/<레포명>
+```
+
+> 💡 **언제 어떤 걸?**
+> - **convert-repo**: 1~2 레포, 즉시 결과/검토 필요할 때
+> - **convert-batch**: 5+ 레포 일괄, 비용 절감 우선, 완료까지 기다릴 수 있을 때
+
 ### 모든 명령어
 
 | 명령어 | 용도 |
 |:---|:---|
-| `convert-repo <org/repo>` | 레포 자동 클론 + 모든 폴더 종합 (양산) |
+| `convert-batch <repo1> [repo2 ...]` | **N 레포를 단일 batch로 (50% 할인, async ≤24h)** |
+| `convert-repo <org/repo>` | 레포 자동 클론 + 모든 폴더 종합 (sync, 실시간) |
 | `convert-folder <path>` | 단일 폴더 종합 (수동) |
 | `convert <file>` | 단일 챕터 변환 (1챕터 → 1글, 레거시) |
 | `status` | 진행 상태 확인 |
@@ -253,15 +278,37 @@ npx tsx src/index.ts revert --repo iq-ai-lab/transformer-deep-dive
 
 ## 💰 Cost
 
-Claude Sonnet 4.5 기준 (실측):
+Claude Sonnet 4.6 기준 (실측, 2026-05).
 
-| 단위 | 비용 | 시간 |
-|:---|:---|:---|
-| 폴더 1개 (5-7챕터) | ~$0.22 | ~69초 |
-| 레포 1개 (~7폴더) | ~$1.50 | ~8분 |
-| 전체 86 레포 (~600폴더) | ~$130-140 | ~12시간 |
+### 폴더당 비용 (3가지 모드 비교)
 
-8 폴더 양산 후 누적: **$1.72**.
+| 모드 | 폴더당 | vs base | 메모 |
+|:---|:---:|:---:|:---|
+| sync (base) | ~$0.21 | — | 캐싱 없음 |
+| sync + caching | ~$0.18 | -14% | few-shot block (~12K) cache hit |
+| **batch + caching** | **~$0.086** | **-60%** | 50% batch discount × 캐싱 효과 |
+
+### 양산 단위 비용 추정
+
+| 단위 | sync | batch+caching |
+|:---|:---:|:---:|
+| 레포 1개 (~7 폴더) | ~$1.50 | ~$0.60 |
+| 86 레포 (~600 폴더) | ~$130 | ~**$52** |
+
+### Caching 작동 방식
+
+- `system.md` (~5.5K) + `few-shot.md` (~6.5K) = ~12K 토큰을 1h TTL로 캐싱
+- 첫 호출은 cache write (2x), 이후 호출은 cache read (0.1x)
+- task + chapters는 폴더마다 다르므로 캐싱 안 함 (write 비용 손해 회피)
+- 검증: `cache_read_input_tokens` 가 두 번째 호출부터 ~12K로 표시되면 hit
+
+### Batch API 작동 방식
+
+- N 폴더 요청을 단일 `messages.batches.create()` 로 제출 → 50% 할인
+- typically <1h, 최대 24h (Anthropic SLA)
+- 검증 실패 시 자동으로 sync `convertFolder()` fallback (재시도 인라인)
+- `custom_id = "{org}--{repo}__{folder}"` 로 결과 매핑
+- 누적 양산 결과: 254 폴더 / **$33.20** (다른 비용 fix 포함)
 
 ---
 
@@ -276,7 +323,10 @@ Claude Sonnet 4.5 기준 (실측):
 | 5 | ✅ | `repo-converter.ts` — 레포 단위 자동화 |
 | 6 | ✅ | `progress.ts` — 진행 추적 |
 | 7 | ✅ | `publisher.ts` — 배포 자동화 (deploy/revert) |
-| 8 | 🚧 | 본격 양산 (Dev 38 + AI 48 = 86 레포) |
+| 8 | ✅ | iq-dev-lab 34 레포 / 254 폴더 1차 양산 완료 |
+| 9 | ✅ | **Prompt caching** — few-shot block에 1h TTL 캐싱 (~14% 절감) |
+| 10 | ✅ | **Batch API** — `convert-batch` 명령으로 50% 할인 (캐싱과 합쳐 ~60%) |
+| 11 | 🚧 | iq-ai-lab 48 레포 + 잔여 dev 레포 양산 |
 
 ---
 
@@ -302,6 +352,16 @@ Claude Sonnet 4.5 기준 (실측):
 - 자동: 양산, 검증, 배포 명령
 - 수동: 검수 + 발행 결정 (`deploy` 실행 시점)
 - `revert` 명령으로 사후 수정 가능
+
+### Why cache only the few-shot block (not task+chapters)?
+- few-shot block (~12K)은 모든 폴더에서 byte-identical → cross-folder cache hit ✅
+- task+chapters는 폴더마다 다름 → cache write 비용(2x)이 매번 부과되어 net loss
+- 마커 1개로 cross-call 캐싱만 활성화. retry는 ~12% 빈도라 별도 마커 비효율
+
+### Why batch API + sync fallback (not pure batch)?
+- 단일 batch 요청 = 50% 할인. 250+ 폴더 양산에서 명확한 비용 우위
+- 검증 실패한 폴더는 batch 결과 받아본 뒤 sync로 재시도 (validator 피드백 루프 보존)
+- 결과: 254 폴더 중 22건 fallback, 모두 1~3 attempt 안에 통과
 
 설계 회고: [iq-proof: 이 블로그는 어떻게 만들어졌나](https://iq-proof.github.io/posts/iq-blogger-system).
 
