@@ -60,7 +60,7 @@
 
 ## ✅ Status — Production Validated
 
-본격 양산 결과 (iq-dev-lab 34 레포):
+본격 양산 결과 (iq-dev-lab 34 + iq-ai-lab 25 = 59 레포):
 
 | 단계 | 레포 | 폴더 | 첫 시도 통과 | 비용 | 비고 |
 |:---|:---:|:---:|:---:|:---:|:---|
@@ -68,9 +68,10 @@
 | Batch #1 | 3 | 21 | 100% | $1.81 | kafka, rabbitmq, grpc |
 | Batch #2 | 31 | 218 | 99.5% | $24.87 | spring/infra/db/security 등, fallback 12회 |
 | Batch #3 | 1 | 14 | 36% | $5.56 | java-api-reference (API 스타일, fallback 9회) |
-| **누적** | **34** | **254** | **~95%** | **~$33** | 1건 재시도 후 100% |
+| Batch #4 (ai-lab) | 21 | 147 | 99% | $16.54 | RL/LLM/CV/NLP/Audio/Systems, fallback 3회 |
+| **누적** | **59** | **401** | **~95%** | **~$50** | Layer 6 양산만 잔여 |
 
-**평균 $0.13/폴더 (sync + caching + batch). 8/8 검증 시점 $0.215/폴더 대비 ~60% 절감.**
+**평균 $0.124/폴더 (sync + caching + batch). 8/8 검증 시점 $0.215/폴더 대비 ~60% 절감 일관 유지.**
 
 ---
 
@@ -326,7 +327,8 @@ Claude Sonnet 4.6 기준 (실측, 2026-05).
 | 8 | ✅ | iq-dev-lab 34 레포 / 254 폴더 1차 양산 완료 |
 | 9 | ✅ | **Prompt caching** — few-shot block에 1h TTL 캐싱 (~14% 절감) |
 | 10 | ✅ | **Batch API** — `convert-batch` 명령으로 50% 할인 (캐싱과 합쳐 ~60%) |
-| 11 | 🚧 | iq-ai-lab 48 레포 + 잔여 dev 레포 양산 |
+| 11 | ✅ | iq-ai-lab Layer 0–5 양산 (25 레포 / 175 폴더) |
+| 12 | 🚧 | iq-ai-lab Layer 6 (Frontier LLM) — Mech Interp · Reasoning · RAG |
 
 ---
 
