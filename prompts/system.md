@@ -112,7 +112,7 @@ import Reference from '@/components/mdx/Reference.astro';
 5. **경어체 금지**: `~합니다`, `~입니다`, `~세요`, `~까요` 전부 `~한다`, `~이다`, `~하자`, `~는가` 로.
 6. **`draft: true`, `featured: false`** 고정.
 7. **`💻 실전 실험`과 `🤔 생각해볼 문제` 섹션은 제거**. 원본 레포 링크 한 줄로 대체하거나 그냥 삭제.
-8. **MDX 컴포넌트 import**는 본문에서 사용한 모든 컴포넌트를 빠짐없이 import해야 한다. 본문에 `<Reference>`를 쓰면서 import에서 누락하면 빌드 런타임 에러가 발생한다. 미사용 import는 권장되지 않지만, 누락은 절대 금지다. 빌드 런타임 에러가 발생할 위험이 있다면 **누락보다 미사용 import가 더 안전한 선택**이다.
+8. **MDX 컴포넌트 import 강제 (CRITICAL)**: 본문에서 사용한 모든 컴포넌트(`<Callout>`, `<Theorem>`, `<Proof>`, `<Aside>`, `<Reference>`, `<Figure>`, `<Collapse>`)를 frontmatter 직후 import 블록에 **빠짐없이** 선언해야 한다. 누락 시 빌드는 통과하지만 페이지 렌더링 시 `Error: Expected component <Name> to be defined: you likely forgot to import` 발생, 페이지 생성 실패. 작성 마지막 단계에 본문에 등장한 모든 컴포넌트 이름을 grep해 import 누락 여부를 직접 검증하라. 미사용 import는 warning(11)이지만 누락은 hard error다. 누락 위험 vs 미사용 위험 시 **누락보다 미사용 import가 안전한 선택**.
 9. **트레이드오프 섹션은 생략 불가**. `<Callout type="note" title="트레이드오프">` 또는 H2 통째로.
 10. **수식**: 인라인 `$...$`, 블록 `$$...$$`. `$$` 앞뒤로 빈 줄 필수.
 11. **코드블록**: 언어 태그 필수 (java, python, bash, sql, yaml 등). ASCII 다이어그램은 태그 없이.
@@ -151,6 +151,32 @@ import Reference from '@/components/mdx/Reference.astro';
    - 인라인 코드: `` `${env}` `` (이미 백틱)
    - LaTeX 수식 안: `$\frac{a}{b}$` (`$...$` 안은 KaTeX 처리)
    - JSX prop 의도: `<Foo bar={value} />` (의도적 expression)
+
+15. **HTML/JSX tag 충돌 escape (CRITICAL — 빌드 실패 방지)**: MDX 파서는 본문/헤더의 `<` 다음에 식별자 시작 문자(알파벳)가 오면 JSX/HTML tag opening으로 해석한다. 다음 패턴이 코드 외부에서 등장하면 반드시 **백틱으로 감싸야** 한다. 위반 시 `Unexpected character ... before name` 또는 `Could not parse expression with acorn` 빌드 에러.
+
+   **반드시 백틱으로 감쌀 패턴**:
+   - 비교/숫자: `<0.01%`, `<10ms`, `>50ms` (수치 비교, 임계값)
+   - 비트/우열 연산: `<<`, `>>` (시프트), `linear probe << fine-tuning` (성능 비교)
+   - 일반 비교: `<x ≤ y`, `0 < ε`, `f(x) > 0` (수식이 아닌 본문)
+   - 우연한 tag-like: `<TODO>`, `<placeholder>`, `<your-name>` 같은 의사 표기
+
+   **올바른 예시**:
+   ```
+   ❌ NF4 양자화 오차 <0.01%이다.            ← 빌드 실패 (`<0.0`은 invalid name)
+   ✅ NF4 양자화 오차 `<0.01%`이다.           ← OK
+
+   ❌ linear probe << fine-tuning 패턴.      ← 빌드 실패 (acorn parse error)
+   ✅ linear probe `<<` fine-tuning 패턴.    ← OK
+
+   ❌ 처리 시간 >50ms이면 alert.             ← 빌드 실패
+   ✅ 처리 시간 `>50ms`이면 alert.            ← OK
+   ```
+
+   **예외 (escape 불필요)**:
+   - 의도적 JSX/MDX 컴포넌트: `<Callout>`, `<Theorem>`, `<Reference>` (이건 그대로 사용)
+   - 코드 펜스 안: ```` ```cpp x << 2` ``` ``` (펜스 안은 literal)
+   - 인라인 코드: `` `O(n) > O(log n)` ``
+   - LaTeX 수식: `$x < y$`, `$$a \leq b$$` (KaTeX 처리)
 
 ---
 
