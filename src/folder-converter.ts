@@ -111,10 +111,16 @@ export async function convertFolder(options: FolderConvertOptions): Promise<Fold
   const combined = await concatenateChapters(options.folderPath, chapters);
 
   // 6. Extract series metadata from folder name and repo
-  // Folder "ch2-transformer-architecture" → order: 2
+  // 폴더명에서 순번 추출. 다양한 명명 규칙 지원:
+  //   "ch2-transformer-architecture" → 2  (ai-lab deep-dive)
+  //   "chapter01-lambda-internals"   → 1  (modern-java-in-action)
+  //   "01-object-model"              → 1  (git-in-depth)
+  //   "part3-flexible-design"        → 3  (object 책 합성 폴더)
+  //   "appendices"                   → 99 (object 책 마지막)
   // Repo "iq-ai-lab/transformer-deep-dive" → seriesSlug: "transformer-deep-dive"
-  const orderMatch = options.folder.match(/^ch(\d+)/);
-  const order = orderMatch && orderMatch[1] ? parseInt(orderMatch[1], 10) : 1;
+  const orderMatch = options.folder.match(/^(?:ch|chapter|pt|part)?(\d+)/);
+  let order = orderMatch && orderMatch[1] ? parseInt(orderMatch[1], 10) : 1;
+  if (!orderMatch && /^appendi/i.test(options.folder)) order = 99;
   const seriesSlug = options.source.split('/').pop() ?? options.folder;
 
   // 7. Build conversion input
