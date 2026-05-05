@@ -70,9 +70,11 @@
 | Batch #3 | 1 | 14 | 36% | $5.56 | java-api-reference (API 스타일, fallback 9회) |
 | Batch #4 (ai-lab Layer 0–5) | 21 | 147 | 99% | $16.54 | RL/LLM/CV/NLP/Audio/Systems, fallback 3회 |
 | Batch #5 (Layer 6 + 책 3권) | 6 | 52 | 94% | $5.76 | mech-interp · reasoning · RAG + object · modern-java · git-in-depth, fallback 3회 |
-| **누적** | **87** | **~605** | **~95%** | **~$56** | 전체 양산 완료 |
+| **누적** | **87** | **~605** | **~95%** | **~$100** | 전체 양산 완료 |
 
-**평균 $0.124/폴더 (sync + caching + batch). 8/8 검증 시점 $0.215/폴더 대비 ~60% 절감 일관 유지.**
+> 각 batch 행은 해당 batch 단독 비용. 누적 ~$100은 batch 외 개발·시행착오·재양산·검증 루프까지 포함한 실측 총액(API 빌링 기준).
+
+**평균 $0.165/폴더 (sync + caching + batch + sync fallback 포함 실측치). 8/8 검증 시점 $0.215/폴더 대비 ~23% 절감.**
 
 ---
 
@@ -290,12 +292,14 @@ Claude Sonnet 4.6 기준 (실측, 2026-05).
 | sync + caching | ~$0.18 | -14% | few-shot block (~12K) cache hit |
 | **batch + caching** | **~$0.086** | **-60%** | 50% batch discount × 캐싱 효과 |
 
-### 양산 단위 비용 추정
+### 양산 단위 비용 — 추정 vs 실측
 
-| 단위 | sync | batch+caching |
-|:---|:---:|:---:|
-| 레포 1개 (~7 폴더) | ~$1.50 | ~$0.60 |
-| 86 레포 (~600 폴더) | ~$130 | ~**$52** |
+| 단위 | sync 추정 | batch+caching 추정 | **실측** |
+|:---|:---:|:---:|:---:|
+| 레포 1개 (~7 폴더) | ~$1.50 | ~$0.60 | ~$1.15 |
+| 86 레포 (~600 폴더) | ~$130 | ~$52 | **~$100** |
+
+실측이 batch+caching 추정($52)보다 높은 이유는 sync fallback과 java-api-reference처럼 첫 시도 통과율이 낮은 레포(36%)에서 재시도가 누적되기 때문. 그래도 sync 단독($130) 대비 ~23% 절감.
 
 ### Caching 작동 방식
 
