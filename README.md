@@ -58,9 +58,9 @@
 
 ---
 
-## ✅ Status — Production Validated
+## ✅ Status — Production Complete
 
-본격 양산 결과 (iq-dev-lab 34 + iq-ai-lab 25 = 59 레포):
+본격 양산 결과 (iq-dev-lab + iq-ai-lab 전 레포 처리):
 
 | 단계 | 레포 | 폴더 | 첫 시도 통과 | 비용 | 비고 |
 |:---|:---:|:---:|:---:|:---:|:---|
@@ -68,8 +68,9 @@
 | Batch #1 | 3 | 21 | 100% | $1.81 | kafka, rabbitmq, grpc |
 | Batch #2 | 31 | 218 | 99.5% | $24.87 | spring/infra/db/security 등, fallback 12회 |
 | Batch #3 | 1 | 14 | 36% | $5.56 | java-api-reference (API 스타일, fallback 9회) |
-| Batch #4 (ai-lab) | 21 | 147 | 99% | $16.54 | RL/LLM/CV/NLP/Audio/Systems, fallback 3회 |
-| **누적** | **59** | **401** | **~95%** | **~$50** | Layer 6 양산만 잔여 |
+| Batch #4 (ai-lab Layer 0–5) | 21 | 147 | 99% | $16.54 | RL/LLM/CV/NLP/Audio/Systems, fallback 3회 |
+| Batch #5 (Layer 6 + 책 3권) | 6 | 52 | 94% | $5.76 | mech-interp · reasoning · RAG + object · modern-java · git-in-depth, fallback 3회 |
+| **누적** | **87** | **~605** | **~95%** | **~$56** | 전체 양산 완료 |
 
 **평균 $0.124/폴더 (sync + caching + batch). 8/8 검증 시점 $0.215/폴더 대비 ~60% 절감 일관 유지.**
 
@@ -328,7 +329,9 @@ Claude Sonnet 4.6 기준 (실측, 2026-05).
 | 9 | ✅ | **Prompt caching** — few-shot block에 1h TTL 캐싱 (~14% 절감) |
 | 10 | ✅ | **Batch API** — `convert-batch` 명령으로 50% 할인 (캐싱과 합쳐 ~60%) |
 | 11 | ✅ | iq-ai-lab Layer 0–5 양산 (25 레포 / 175 폴더) |
-| 12 | 🚧 | iq-ai-lab Layer 6 (Frontier LLM) — Mech Interp · Reasoning · RAG |
+| 12 | ✅ | iq-ai-lab Layer 6 (Frontier LLM) — Mech Interp · Reasoning · RAG (3 레포 / 21 폴더) |
+| 13 | ✅ | 책 시리즈 — object · modern-java-in-action · git-in-depth (3 레포 / 31 폴더). object는 챕터당 1 README 구조라 part-단위 합성 폴더로 묶어 처리. |
+| 14 | ✅ | **Filename collision namespacing** — 동일 basename(예: `ch7-frontier`)이 여러 레포에 존재 시 `{stem}-{repo-suffix}.mdx`로 자동 분리. deploy/revert 양쪽에 반영. |
 
 ---
 

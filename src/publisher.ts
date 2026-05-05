@@ -61,17 +61,33 @@ export async function deploy(options: DeployOptions): Promise<DeployResult> {
 
   await verifyTargetExists(targetDir, options.targetPath);
 
-  const files = await discoverDraftFiles(draftsDir, options.repo);
+  // For collision detection we need to know which other repos exist,
+  // so always discover *all* drafts; the per-repo filter is applied
+  // when deciding what to actually deploy.
+  const allFiles = await discoverDraftFiles(draftsDir);
+  const files = options.repo
+      ? allFiles.filter((f) => f.repo === options.repo!.replace(/\//g, '-'))
+      : allFiles;
   const result: DeployResult = { copied: [], failed: [], gitPushed: false };
 
   if (files.length === 0) return result;
 
+  // Build a map of basename → repos that produce it. If >1, that name collides
+  // and we must namespace it; otherwise keep the bare filename for backward compat.
+  const collisionMap = new Map<string, Set<string>>();
+  for (const f of allFiles) {
+    const key = basename(f.path);
+    if (!collisionMap.has(key)) collisionMap.set(key, new Set());
+    collisionMap.get(key)!.add(f.repo);
+  }
+
   // Copy + flip draft for each file
   for (const file of files) {
-    const targetFile = resolve(targetDir, basename(file.path));
+    const outName = resolveDeployedName(file, collisionMap);
+    const targetFile = resolve(targetDir, outName);
 
     if (options.dryRun) {
-      result.copied.push(`[dry-run] ${basename(file.path)}`);
+      result.copied.push(`[dry-run] ${outName}`);
       continue;
     }
 
@@ -79,10 +95,10 @@ export async function deploy(options: DeployOptions): Promise<DeployResult> {
       const content = await readFile(file.path, 'utf-8');
       const flipped = flipDraftToFalse(content);
       await writeFile(targetFile, flipped, 'utf-8');
-      result.copied.push(basename(file.path));
+      result.copied.push(outName);
     } catch (err) {
       result.failed.push({
-        file: basename(file.path),
+        file: outName,
         error: (err as Error).message,
       });
     }
@@ -218,13 +234,65 @@ async function discoverPublishedFiles(
       return [];
     }
 
-    const repoSlugs = draftFiles.filter((f) => f.endsWith('.mdx'));
-    return repoSlugs
-    .filter((slug) => mdxFiles.includes(slug))
-    .map((slug) => resolve(postsDir, slug));
+    // Build collision map across ALL drafts, mirroring deploy logic
+    const allDrafts = await discoverDraftFiles('./drafts');
+    const collisionMap = new Map<string, Set<string>>();
+    for (const f of allDrafts) {
+      const key = basename(f.path);
+      if (!collisionMap.has(key)) collisionMap.set(key, new Set());
+      collisionMap.get(key)!.add(f.repo);
+    }
+
+    const candidates = draftFiles
+        .filter((f) => f.endsWith('.mdx'))
+        .map((f) =>
+            resolveDeployedName(
+                { path: resolve(draftsRepoDir, f), repo: repoSlug },
+                collisionMap,
+            ),
+        );
+    return candidates
+        .filter((slug) => mdxFiles.includes(slug))
+        .map((slug) => resolve(postsDir, slug));
   }
 
   return [];
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Filename collision handling
+   ───────────────────────────────────────────────────────────── */
+
+/**
+ * Derive a stable per-file name when basenames collide across repos.
+ *
+ * Most basenames are unique → return as-is (backward compatible).
+ * If two or more repos produce the same basename, append a repo-suffix:
+ *   ch7-frontier.mdx (3 repos) → ch7-frontier-llm-reasoning.mdx
+ *
+ * The suffix is the last meaningful segment of the repo name with `-deep-dive`
+ * stripped. Stable across runs; deploy and revert both call this.
+ */
+export function resolveDeployedName(
+    file: DraftFile,
+    collisionMap: Map<string, Set<string>>,
+): string {
+  const name = basename(file.path);
+  const owners = collisionMap.get(name);
+  if (!owners || owners.size <= 1) return name;
+
+  const suffix = repoSuffix(file.repo);
+  const ext = name.endsWith('.mdx') ? '.mdx' : '';
+  const stem = ext ? name.slice(0, -ext.length) : name;
+  return `${stem}-${suffix}${ext}`;
+}
+
+/** "iq-ai-lab-llm-reasoning-deep-dive" → "llm-reasoning". */
+function repoSuffix(repoSlug: string): string {
+  // Strip org prefix (everything up to and including the first hyphen-lab-)
+  const afterOrg = repoSlug.replace(/^iq-(?:ai|dev)-lab-/, '');
+  // Strip trailing -deep-dive (most repos)
+  return afterOrg.replace(/-deep-dive$/, '');
 }
 
 /* ─────────────────────────────────────────────────────────────
